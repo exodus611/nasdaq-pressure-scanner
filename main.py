@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import sys
 import json
 import time
 import datetime
@@ -7,6 +8,45 @@ import threading
 import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
+
+# Проверяем ключи Alpaca ПЕРЕД запуском
+ALPACA_KEY = os.environ.get("ALPACA_API_KEY", "")
+ALPACA_SECRET = os.environ.get("ALPACA_SECRET_KEY", "")
+DEEPSEEK_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
+
+print("=" * 70)
+print("Проверка ключей...")
+print("=" * 70)
+print(f"  DEEPSEEK_API_KEY: {'OK' if DEEPSEEK_KEY else 'MISSING'}")
+print(f"  ALPACA_API_KEY: {'OK' if ALPACA_KEY else 'MISSING'}")
+print(f"  ALPACA_SECRET_KEY: {'OK' if ALPACA_SECRET else 'MISSING'}")
+
+if not ALPACA_KEY or not ALPACA_SECRET:
+    print("")
+    print("!" * 70)
+    print("ОШИБКА: Ключи Alpaca не найдены!")
+    print("!" * 70)
+    print("")
+    print("ЧТО ДЕЛАТЬ:")
+    print("1. Зайди в Railway -> твой проект -> Variables")
+    print("2. Добавь ДВЕ переменные:")
+    print("   - ALPACA_API_KEY = PK... (из https://app.alpaca.markets/)")
+    print("   - ALPACA_SECRET_KEY = ... (из того же места)")
+    print("3. Нажми Redeploy")
+    print("")
+    sys.exit(1)
+
+if not DEEPSEEK_KEY:
+    print("")
+    print("!" * 70)
+    print("ОШИБКА: DEEPSEEK_API_KEY не найден!")
+    print("!" * 70)
+    print("Добавь в Railway Variables: DEEPSEEK_API_KEY")
+    sys.exit(1)
+
+print("")
+print("Все ключи найдены! Запуск сканера...")
+print("")
 
 app = FastAPI(title="NASDAQ Pressure Scanner v8.0")
 
