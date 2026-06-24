@@ -1,78 +1,112 @@
-import requests
-import pandas as pd
-import time
+import os
+from alpaca.trading.client import TradingClient
+from alpaca.trading.requests import GetAssetsRequest
+from alpaca.trading.enums import AssetClass, AssetStatus
+
+def get_alpaca_trading_client():
+    """Получение Alpaca Trading клиента"""
+    api_key = os.getenv("ALPACA_API_KEY")
+    secret_key = os.getenv("ALPACA_SECRET_KEY")
+    if not api_key or not secret_key:
+        raise ValueError("ALPACA_API_KEY и ALPACA_SECRET_KEY не установлены!")
+    
+    # Используем paper trading (бесплатный)
+    return TradingClient(api_key, secret_key, paper=True)
 
 def get_nasdaq_tickers():
-    """Загрузка ВСЕХ тикеров NASDAQ с Nasdaq.com API"""
-    url = "https://api.nasdaq.com/api/screener/stocks?tableType=traded&exchange=NASDAQ&limit=10000"
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'application/json, text/plain, */*',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Referer': 'https://www.nasdaq.com/',
-        'Origin': 'https://www.nasdaq.com',
-        'Connection': 'keep-alive',
-        'Sec-Fetch-Dest': 'empty',
-        'Sec-Fetch-Mode': 'cors',
-        'Sec-Fetch-Site': 'same-origin'
-    }
+    """Загрузка ВСЕХ тикеров NASDAQ через Alpaca Trading API"""
+    print("  📡 Попытка загрузки через Alpaca Trading API...")
     
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            print(f"  📡 Попытка {attempt + 1}/{max_retries} загрузки с Nasdaq.com API...")
-            r = requests.get(url, headers=headers, timeout=30)
-            print(f"  📡 Status: {r.status_code}")
-            
-            if r.status_code == 200:
-                data = r.json()
-                rows = data.get('data', {}).get('rows', [])
+    try:
+        client = get_alpaca_trading_client()
+        
+        # Запрашиваем все активные акции на US биржах
+        request = GetAssetsRequest(
+            status=AssetStatus.ACTIVE,
+            asset_class=AssetClass.US_EQUITY
+        )
+        
+        assets = client.get_all_assets(request)
+        
+        # Фильтруем только NASDAQ тикеры
+        nasdaq_tickers = []
+        for asset in assets:
+            # Проверяем что это NASDAQ тикер и не special security
+            if (asset.exchange and 'NASDAQ' in asset.exchange.upper() and
+                asset.tradable and 
+                not asset.symbol.startswith('$') and
+                not asset.symbol.endswith('W') and
+                not asset.symbol.endswith('U') and
+                len(asset.symbol) <= 5):  # Обычные тикеры 1-5 символов
                 
-                if rows:
-                    # Фильтруем только реальные тикеры (без $, warrants, units)
-                    tickers = []
-                    for row in rows:
-                        symbol = row.get('symbol', '')
-                        # Пропускаем специальные символы
-                        if symbol and not symbol.startswith('$') and not symbol.endswith('W') and not symbol.endswith('U'):
-                            tickers.append(symbol)
-                    
-                    print(f"  ✅ Nasdaq.com API: {len(tickers)} тикеров")
-                    
-                    if len(tickers) > 500:
-                        return tickers
-                else:
-                    print(f"  ⚠️ API вернул пустой список")
-            else:
-                print(f"  ⚠️ HTTP ошибка: {r.status_code}")
+                nasdaq_tickers.append(asset.symbol)
         
-        except requests.exceptions.RequestException as e:
-            print(f"  ⚠️ Ошибка сети: {e}")
-        except Exception as e:
-            print(f"  ⚠️ Неожиданная ошибка: {e}")
+        print(f"  ✅ Alpaca Trading API: {len(nasdaq_tickers)} тикеров NASDAQ")
         
-        if attempt < max_retries - 1:
-            wait_time = (attempt + 1) * 5
-            print(f"  ⏱️ Ждём {wait_time} секунд перед следующей попыткой...")
-            time.sleep(wait_time)
+        if len(nasdaq_tickers) > 500:
+            return nasdaq_tickers
+        else:
+            print(f"  ⚠️ Alpaca вернул только {len(nasdaq_tickers)} тикеров (ожидалось 3000+)")
     
-    print("  ❌ Не удалось загрузить тикеры после всех попыток")
+    except Exception as e:
+        print(f"  ❌ Ошибка Alpaca Trading API: {e}")
+    
     return []
 
+def get_all_us_equities():
+    """Fallback: Все US equities (NASDAQ + NYSE)"""
+    print("  📡 Fallback: Загрузка всех US equities через Alpaca...")
+    
+    try:
+        client = get_alpaca_trading_client()
+        
+        request = GetAssetsRequest(
+            status=AssetStatus.ACTIVE,
+            asset_class=AssetClass.US_EQUITY
+        )
+        
+        assets = client.get_all_assets(request)
+        
+        all_tickers = []
+        for asset in assets:
+            if (asset.tradable and 
+                not asset.symbol.startswith('$') and
+                not asset.symbol.endswith('W') and
+                not asset.symbol.endswith('U') and
+                len(asset.symbol) <= 5):
+                
+                all_tickers.append(asset.symbol)
+        
+        print(f"  ✅ Alpaca US Equities: {len(all_tickers)} тикеров")
+        return all_tickers
+    
+    except Exception as e:
+        print(f"  ❌ Ошибка загрузки US equities: {e}")
+        return []
+
 def get_tickers():
-    """Основной метод загрузки тикеров"""
-    print("📦 Загрузка ВСЕХ тикеров NASDAQ...")
+    """Основной метод загрузки тикеров с несколькими стратегиями"""
+    print("📦 Загрузка тикеров через Alpaca Trading API...")
+    
+    # Стратегия 1: Только NASDAQ тикеры
+    print("\n🎯 СТРАТЕГИЯ 1: Только NASDAQ тикеры")
     tickers = get_nasdaq_tickers()
     
     if tickers and len(tickers) > 500:
-        print(f"✅ Загружено {len(tickers)} тикеров с Nasdaq.com")
+        print(f"✅ Загружено {len(tickers)} тикеров NASDAQ")
         return tickers
     
-    print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: Не удалось загрузить тикеры!")
-    print(f"   Возможные причины:")
-    print(f"   1. Railway IP заблокирован Nasdaq.com")
-    print(f"   2. Изменилась структура API")
-    print(f"   3. Проблема с сетью")
-    print(f"")
-    print(f"   РЕШЕНИЕ: Используй локальный запуск или другой хостинг")
+    # Стратегия 2: Все US equities (NASDAQ + NYSE)
+    print("\n🎯 СТРАТЕГИЯ 2: Все US equities (fallback)")
+    tickers = get_all_us_equities()
+    
+    if tickers and len(tickers) > 500:
+        print(f"✅ Загружено {len(tickers)} тикеров (NASDAQ + NYSE)")
+        return tickers
+    
+    print(f"\n❌ КРИТИЧЕСКАЯ ОШИБКА: Не удалось загрузить тикеры!")
+    print(f"   Проверь:")
+    print(f"   1. ALPACA_API_KEY и ALPACA_SECRET_KEY правильные")
+    print(f"   2. Аккаунт Alpaca активен")
+    print(f"   3. Есть доступ к Trading API")
     return []
