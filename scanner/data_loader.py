@@ -1,6 +1,7 @@
 import os
 import pandas as pd
 import numpy as np
+import yfinance as yf
 from datetime import datetime, timedelta
 from alpaca.data import StockHistoricalDataClient, StockBarsRequest, TimeFrame, DataFeed
 from alpaca.data.timeframe import TimeFrameUnit
@@ -14,21 +15,18 @@ def get_alpaca_client():
         raise ValueError("ALPACA_API_KEY и ALPACA_SECRET_KEY не установлены!")
     return StockHistoricalDataClient(api_key, secret_key)
 
-def load_ohlcv(tickers, days=180):
-    """Загрузка OHLCV через Alpaca с IEX feed (бесплатный план)"""
+def load_via_alpaca_iex(tickers, days=180):
+    """Загрузка через Alpaca IEX feed (бесплатный план)"""
     client = get_alpaca_client()
     end = datetime.now()
     start = end - timedelta(days=days)
     all_data = {}
     
-    # ВАЖНО: IEX feed для бесплатного плана
-    # SIP feed требует платной подписки
     feed = DataFeed.IEX
-    
-    batch_size = 50  # Меньше для надёжности
+    batch_size = 50
     total_batches = (len(tickers) + batch_size - 1) // batch_size
     
-    print(f"  📡 Загрузка через Alpaca (IEX feed): {len(tickers)} тикеров, {total_batches} батчей...")
+    print(f"  📡 Alpaca IEX: {len(tickers)} тикеров, {total_batches} батчей...")
     
     for i in range(0, len(tickers), batch_size):
         batch = tickers[i:i+batch_size]
@@ -47,7 +45,7 @@ def load_ohlcv(tickers, days=180):
             
             loaded_count = 0
             for symbol in batch:
-                if symbol in bars and bars[symbol]:
+                if symbol in bars and bars[symbol] and len(bars[symbol]) >= 20:
                     df = pd.DataFrame([{
                         'Open': bar.open,
                         'High': bar.high,
@@ -57,30 +55,89 @@ def load_ohlcv(tickers, days=180):
                         'Date': bar.timestamp
                     } for bar in bars[symbol]])
                     
-                    if not df.empty:
-                        df.set_index('Date', inplace=True)
-                        df.sort_index(inplace=True)
-                        if len(df) >= 20:  # Минимум 20 дней для расчётов
-                            all_data[symbol] = df
-                            loaded_count += 1
+                    df.set_index('Date', inplace=True)
+                    df.sort_index(inplace=True)
+                    all_data[symbol] = df
+                    loaded_count += 1
             
-            if batch_num % 5 == 0 or batch_num == total_batches:
+            if batch_num % 10 == 0 or batch_num == total_batches:
                 print(f"    Batch {batch_num}/{total_batches}: {loaded_count}/{len(batch)} тикеров", flush=True)
             
         except Exception as e:
             err_msg = str(e)
-            if "subscription" in err_msg.lower() or "sip" in err_msg.lower():
-                print(f"    ⚠️ Batch {batch_num}: Ошибка подписки - {err_msg[:100]}")
-            else:
-                print(f"    ⚠️ Batch {batch_num}: {err_msg[:100]}")
+            if batch_num % 10 == 0 or batch_num == total_batches:
+                print(f"    Batch {batch_num}/{total_batches}: Ошибка - {err_msg[:80]}", flush=True)
     
-    print(f"  ✅ Всего загружено: {len(all_data)} тикеров")
+    return all_data
+
+def load_via_yahoo_fallback(tickers, days=180):
+    """Fallback загрузка через Yahoo Finance для тикеров, недоступных на Alpaca IEX"""
+    print(f"  📡 Yahoo Finance fallback: {len(tickers)} тикеров...")
+    all_data = {}
+    
+    for i, ticker in enumerate(tickers, 1):
+        if i % 50 == 0:
+            print(f"    Progress: {i}/{len(tickers)}", flush=True)
+        
+        try:
+            # Загружаем через yfinance
+            df = yf.download(ticker, period=f"{days}d", interval="1d", progress=False)
+            
+            if not df.empty and len(df) >= 20:
+                all_data[ticker] = df
+            
+            # Небольшая задержка чтобы не получить бан
+            if i % 10 == 0:
+                time.sleep(0.5)
+        
+        except Exception as e:
+            # Пропускаем тикеры с ошибками
+            pass
+    
+    print(f"    ✅ Yahoo Finance загрузил: {len(all_data)} тикеров")
+    return all_data
+
+def load_ohlcv(tickers, days=180):
+    """Основной метод загрузки с двойной стратегией: Alpaca IEX → Yahoo Finance"""
+    print("\n📊 СТРАТЕГИЯ ЗАГРУЗКИ: Alpaca IEX + Yahoo Finance Fallback")
+    
+    # Шаг 1: Пробуем Alpaca IEX для всех тикеров
+    print("\nШАГ 1: Загрузка через Alpaca IEX...")
+    alpaca_data = load_via_alpaca_iex(tickers, days)
+    print(f"  ✅ Alpaca IEX загрузил: {len(alpaca_data)} тикеров")
+    
+    # Шаг 2: Определяем какие тикеры не загрузились
+    missing_tickers = [t for t in tickers if t not in alpaca_data]
+    print(f"  ⚠️ Не загружено через Alpaca: {len(missing_tickers)} тикеров")
+    
+    # Шаг 3: Fallback на Yahoo Finance для недостающих
+    if missing_tickers:
+        print(f"\nШАГ 2: Fallback на Yahoo Finance для {len(missing_tickers)} тикеров...")
+        yahoo_data = load_via_yahoo_fallback(missing_tickers, days)
+        
+        # Объединяем данные
+        all_data = {**alpaca_data, **yahoo_data}
+    else:
+        all_data = alpaca_data
+    
+    print(f"\n✅ ИТОГО ЗАГРУЖЕНО: {len(all_data)} из {len(tickers)} тикеров")
     return all_data
 
 def load_market_data():
     """Загрузка данных QQQ и SPY для расчёта Relative Strength"""
-    print("  📡 Загрузка QQQ и SPY для расчёта RS...")
-    return load_ohlcv(['QQQ', 'SPY', 'SPY', 'IWM'], days=30)
+    print("\n📡 Загрузка QQQ, SPY, IWM для расчёта RS...")
+    
+    # Пробуем Alpaca IEX
+    market_data = load_via_alpaca_iex(['QQQ', 'SPY', 'IWM'], days=30)
+    
+    # Fallback на Yahoo если нужно
+    missing = [t for t in ['QQQ', 'SPY', 'IWM'] if t not in market_data]
+    if missing:
+        yahoo_data = load_via_yahoo_fallback(missing, days=30)
+        market_data.update(yahoo_data)
+    
+    print(f"  ✅ Загружено рыночных данных: {len(market_data)} ETF")
+    return market_data
 
 def calculate_technical_indicators(df):
     """Расчет технических индикаторов"""
