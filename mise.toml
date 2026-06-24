@@ -1,0 +1,6 @@
+[settings]
+python.github_attestations = false
+experimental = true
+
+[env]
+MISE_PYTHON_GITHUB_ATTESTATIONS = "false"
