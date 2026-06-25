@@ -391,6 +391,17 @@ backtest_results = {}
 backtest_lock    = threading.Lock()
 
 
+def passes_quality_filter(df):
+    try:
+        close = df["Close"].iloc[-1]
+        avg_dollar_vol = (df["Close"] * df["Volume"]).rolling(20).mean().iloc[-1]
+        ema50 = df["Close"].ewm(span=50, adjust=False).mean().iloc[-1]
+        if close < 2.0: return False, "penny"
+        if avg_dollar_vol < 500_000: return False, "illiquid"
+        if close < ema50 * 0.95: return False, "downtrend"
+        return True, "ok"
+    except: return False, "error"
+
 def _run_backtest_for_ticker(ticker, df, market):
     """
     Для одного тикера прогоняем скользящее окно:
