@@ -186,14 +186,22 @@ def get_resistance_levels(df,window=20):
         if not unique or abs(level-unique[-1])/unique[-1]>0.02: unique.append(level)
     return unique[-5:] if unique else [df["High"].max()*1.02]
 
+def _safe_div(a,b,default=0.0):
+    try:
+        if b==0 or b!=b: return default
+        r=a/b
+        return r if r==r else default
+    except: return default
+
 def calculate_pressure_score(df):
     if df.empty or len(df)<20: return 0,{}
     avg_vol=df["Volume"].rolling(20).mean().iloc[-1]
-    vol_score=100-min(100,(df["Volume"].iloc[-1]/avg_vol)*100)
+    vol_score=100-min(100,_safe_div(df["Volume"].iloc[-1],avg_vol,1.0)*100)
     avg_atr=df["ATR"].rolling(20).mean().iloc[-1]
-    atr_score=100-min(100,(df["ATR"].iloc[-1]/avg_atr)*100)
+    atr_score=100-min(100,_safe_div(df["ATR"].iloc[-1],avg_atr,1.0)*100)
     df=df.copy(); df["Range"]=df["High"]-df["Low"]
-    rng_score=100-min(100,(df["Range"].iloc[-1]/df["Range"].rolling(20).mean().iloc[-1])*100)
+    avg_rng=df["Range"].rolling(20).mean().iloc[-1]
+    rng_score=100-min(100,_safe_div(df["Range"].iloc[-1],avg_rng,1.0)*100)
     higher_lows=1 if df["Low"].iloc[-1]>df["Low"].iloc[-5] else 0
     dist_score=min(100,((df["High"].max()*1.02-df["Close"].iloc[-1])/(df["High"].max()*1.02))*100)
     score=vol_score*0.25+atr_score*0.25+rng_score*0.20+higher_lows*15+dist_score*0.15
@@ -209,16 +217,18 @@ def calculate_rs_score(tdf,qdf,sdf):
     return score,{}
 
 def calculate_breakout_score(df,resistance):
-    pct=(df["Close"].iloc[-1]/resistance)*100
-    vol_surge=(df["Volume"].iloc[-1]/df["Volume"].rolling(20).mean().iloc[-1])*100
+    pct=_safe_div(df["Close"].iloc[-1],resistance,0.0)*100
+    avg_vol=df["Volume"].rolling(20).mean().iloc[-1]
+    vol_surge=_safe_div(df["Volume"].iloc[-1],avg_vol,1.0)*100
     return min(100,max(0,pct))*0.60+min(200,max(0,vol_surge))*0.40,{}
 
 def calculate_catalyst_score(ticker): return 40.0,{}
 
 def determine_state(p,rs,b,c):
-    if p>=95 and rs>=90 and b>=95 and c>=86: return "TRIGGERED"
-    if p>=85 and rs>=80 and b>=85 and c>=71: return "READY"
-    if p>=75 and rs>=65 and b>=70 and c>=50: return "WATCH"
+    # catalyst заглушка 40.0, пороги без него
+    if p>=70 and rs>=60 and b>=60: return "TRIGGERED"
+    if p>=55 and rs>=45 and b>=50: return "READY"
+    if p>=40 and rs>=30 and b>=35: return "WATCH"
     return "NO_SIGNAL"
 
 DASHBOARD_HTML = """<!DOCTYPE html><html><head><title>NASDAQ Pressure Scanner v8.1</title>
